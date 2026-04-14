@@ -1,0 +1,222 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: users
+    // Fields:
+    //   - uid: string (required)
+    //   - email: string (required, email format)
+    //   - displayName: string
+    //   - role: string (required, enum: ['admin', 'maintenance', 'viewer'])
+    //   - createdAt: timestamp
+     //
+      // Collection: tools
+      // Fields:
+      //   - toolType: string (required)
+      //   - characteristic: string (required)
+      //   - quantity: number (required)
+      //   - imageUrl: string (optional)
+      //   - maintenanceHistory: array of objects (optional)
+      //     - id: string
+      //     - date: string (ISO 8601)
+      //     - cost: number
+      //     - description: string (optional)
+      //     - createdAt: string
+      //   - loans: array of objects (optional)
+      //     - id: string
+      //     - borrowerName: string
+      //     - borrowDate: string (ISO 8601)
+      //     - returnDate: string (ISO 8601)
+      //     - returnedDate: string (ISO 8601, optional)
+      //     - status: string (enum: 'active', 'returned')
+      //     - createdAt: string
+      //   - createdAt: string (required, ISO 8601)
+      //   - updatedAt: string (required, ISO 8601)
+     //
+    //   - title: string (required)
+    //   - description: string
+    //   - status: string (required, enum: ['open', 'in-progress', 'completed', 'cancelled'])
+    //   - priority: string (required, enum: ['preventive', 'complementary', 'necessary', 'urgent'])
+    //   - location: string
+    //   - requesterId: string (required)
+    //   - assignedTo: string
+    //   - createdAt: timestamp
+    //   - updatedAt: timestamp
+     //
+     // Collection: inventory
+     // Fields:
+     //   - materialType: string (required)
+     //   - characteristic: string (required)
+     //   - quantity: number (required)
+     //   - imageUrl: string (optional)
+     //   - createdAt: string (required, ISO 8601)
+     //   - updatedAt: string (required, ISO 8601)
+     //
+    // ===============================================================
+
+    // Helper Functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function getUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function hasRole(role) {
+      return isAuthenticated() && getUserData().role == role;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && 
+        (getUserData().role == 'admin' || 
+         (request.auth.token.email == "lucaslh@gmail.com" && request.auth.token.email_verified == true));
+    }
+
+    function isMaintenance() {
+      return hasRole('maintenance') || isAdmin();
+    }
+
+    function isViewer() {
+      return hasRole('viewer') || isMaintenance();
+    }
+
+    // Domain Validators
+    function isValidUser(data) {
+      return data.keys().hasAll(['uid', 'email', 'role']) &&
+             data.uid is string &&
+             data.email is string &&
+             data.role in ['admin', 'maintenance', 'viewer'];
+    }
+
+    function isValidServiceOrder(data) {
+      return data.keys().hasAll(['requesterName', 'churchArea', 'requestDetails', 'justification', 'status', 'priority', 'requesterId', 'createdAt', 'updatedAt']) &&
+             data.requesterName is string && data.requesterName.size() > 0 && data.requesterName.size() < 100 &&
+             data.churchArea is string && data.churchArea.size() > 0 && data.churchArea.size() < 100 &&
+             data.requestDetails is string && data.requestDetails.size() > 0 && data.requestDetails.size() < 2000 &&
+             data.justification is string && data.justification.size() > 0 && data.justification.size() < 2000 &&
+             data.status in ['open', 'in-progress', 'completed', 'cancelled'] &&
+             data.priority in ['preventive', 'complementary', 'necessary', 'urgent'] &&
+             data.createdAt is string &&
+             data.updatedAt is string &&
+             (!('solutionIdea' in data) || (data.solutionIdea is string && data.solutionIdea.size() < 2000)) &&
+             (!('imageUrl' in data) || (data.imageUrl is string && data.imageUrl.size() < 2000)) &&
+             (!('budget' in data) || data.budget is number) &&
+             (!('assignedToIds' in data) || (data.assignedToIds is list && data.assignedToIds.size() < 20)) &&
+             (!('cancellationReason' in data) || (data.cancellationReason is string && data.cancellationReason.size() < 1000));
+    }
+
+     function isValidInventoryItem(data) {
+       return data.keys().hasAll(['materialType', 'characteristic', 'quantity', 'createdAt', 'updatedAt']) &&
+              data.materialType is string && data.materialType.size() > 0 && data.materialType.size() < 200 &&
+              data.characteristic is string && data.characteristic.size() > 0 && data.characteristic.size() < 2000 &&
+              data.quantity is number && data.quantity > 0 &&
+              data.createdAt is string &&
+              data.updatedAt is string &&
+              (!('imageUrl' in data) || (data.imageUrl is string && data.imageUrl.size() < 2000));
+     }
+
+      function isValidTool(data) {
+        return data.keys().hasAll(['toolType', 'characteristic', 'quantity', 'createdAt', 'updatedAt']) &&
+               data.toolType is string && data.toolType.size() > 0 && data.toolType.size() < 200 &&
+               data.characteristic is string && data.characteristic.size() > 0 && data.characteristic.size() < 2000 &&
+               data.quantity is number && data.quantity > 0 &&
+               data.createdAt is string &&
+               data.updatedAt is string &&
+               (!('imageUrl' in data) || (data.imageUrl is string && data.imageUrl.size() < 2000)) &&
+               (!('maintenanceHistory' in data) || (data.maintenanceHistory is list)) &&
+               (!('loans' in data) || (data.loans is list));
+      }
+
+      function isValidToolLoan(loan) {
+        return loan.keys().hasAll(['id', 'borrowerName', 'borrowDate', 'returnDate', 'status', 'createdAt']) &&
+               loan.id is string &&
+               loan.borrowerName is string && loan.borrowerName.size() > 0 && loan.borrowerName.size() < 200 &&
+               loan.borrowDate is string &&
+               loan.returnDate is string &&
+               loan.status in ['active', 'returned'] &&
+               loan.createdAt is string &&
+               (!('returnedDate' in loan) || (loan.returnedDate is string));
+      }
+
+     // Rules
+    match /users/{userId} {
+      allow read: if isAdmin() || isOwner(userId);
+      allow create: if isAuthenticated() && isOwner(userId) && isValidUser(request.resource.data) && 
+                      (request.resource.data.role == 'viewer' || request.auth.token.email == "lucaslh@gmail.com");
+      allow update: if (isAdmin() || (isOwner(userId) && request.auth.token.email == "lucaslh@gmail.com")) && isValidUser(request.resource.data);
+      allow delete: if isAdmin() && request.auth.token.email != resource.data.email; // Admin cannot delete themselves
+    }
+
+    match /serviceOrders/{orderId} {
+      allow read: if isAdmin() || 
+                    (isAuthenticated() && (resource.data.requesterId == request.auth.uid || 
+                                           (resource.data.assignedToIds is list && request.auth.uid in resource.data.assignedToIds)));
+      allow create: if isAuthenticated() && isValidServiceOrder(request.resource.data) && 
+                      request.resource.data.requesterId == request.auth.uid &&
+                      (!('budget' in request.resource.data) || isAdmin());
+      allow update: if isAdmin() || 
+                      (isMaintenance() && 
+                       isValidServiceOrder(request.resource.data) &&
+                       (!('budget' in request.resource.data) || request.resource.data.budget == resource.data.budget) &&
+                       (!('deadline' in request.resource.data) || request.resource.data.deadline == resource.data.deadline) &&
+                       (!('assignedToIds' in request.resource.data) || request.resource.data.assignedToIds == resource.data.assignedToIds));
+      allow delete: if isAdmin();
+    }
+
+      match /inventory/{itemId} {
+        allow read: if isMaintenance();
+        allow create, update: if isAdmin() && isValidInventoryItem(request.resource.data);
+        allow delete: if isAdmin();
+      }
+
+      match /tools/{toolId} {
+         allow read: if isAdmin();
+         allow create, update: if isAdmin() && isValidTool(request.resource.data) && 
+                                  (!('loans' in request.resource.data) || 
+                                   (request.resource.data.loans is list && 
+                                    request.resource.data.loans.size() < 1000));
+         allow delete: if isAdmin();
+       }
+
+     match /maintenance_dates/{dateId} {
+       allow read: if isMaintenance();
+       allow write: if isAdmin();
+     }
+
+     // Rules for Notifications
+     match /users/{userId}/notifications/{notificationId} {
+       // Usuário só pode ler suas próprias notificações
+       allow read: if isOwner(userId);
+       
+       // Apenas o servidor (Cloud Functions) pode criar notificações
+       allow create: if false;
+       
+       // Usuário pode atualizar suas próprias notificações (marcar como lida)
+       allow update: if isOwner(userId) &&
+         request.resource.data.keys().hasOnly(['read', 'title', 'body', 'createdAt', 'userId', 'data', 'tag']);
+       
+       // Usuário pode deletar suas próprias notificações
+       allow delete: if isOwner(userId);
+     }
+
+     // Rules for FCM Tokens
+     match /users/{userId}/fcmTokens/{tokenId} {
+       // Apenas o servidor pode ler tokens (não expor para o cliente)
+       allow read: if false;
+       
+       // Usuário pode criar seus próprios tokens
+       allow create: if isOwner(userId);
+       
+       // Usuário pode deletar seus próprios tokens
+       allow delete: if isOwner(userId);
+     }
+    }
+}

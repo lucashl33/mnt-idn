@@ -1,0 +1,28 @@
+// Firestore Rules para Notificações
+// Adicione estas regras ao seu firestore.rules
+
+match /users/{userId}/notifications/{notificationId} {
+  // Usuário só pode ler suas próprias notificações
+  allow read: if request.auth.uid == userId;
+  
+  // Apenas o servidor pode criar notificações
+  allow create: if false; // Criar via Cloud Functions
+  
+  // Usuário pode atualizar suas próprias notificações (marcar como lida)
+  allow update: if request.auth.uid == userId &&
+    request.resource.data.keys().hasOnly(['read', 'title', 'body', 'createdAt', 'userId', 'data']);
+  
+  // Usuário pode deletar suas próprias notificações
+  allow delete: if request.auth.uid == userId;
+}
+
+match /users/{userId}/fcmTokens/{tokenId} {
+  // Apenas o servidor pode ler tokens
+  allow read: if false;
+  
+  // Usuário pode criar seus próprios tokens
+  allow create: if request.auth.uid == userId;
+  
+  // Usuário pode deletar seus próprios tokens
+  allow delete: if request.auth.uid == userId;
+}

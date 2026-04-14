@@ -1,0 +1,161 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile and roles",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string"
+        },
+        "email": {
+          "type": "string",
+          "format": "email"
+        },
+        "displayName": {
+          "type": "string"
+        },
+        "role": {
+          "type": "string",
+          "enum": [
+            "admin",
+            "maintenance",
+            "viewer"
+          ]
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "uid",
+        "email",
+        "role"
+      ]
+    },
+    "ServiceOrder": {
+      "title": "Service Order",
+      "description": "Maintenance request or order",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "requesterName": {
+          "type": "string"
+        },
+        "churchArea": {
+          "type": "string"
+        },
+        "requestDetails": {
+          "type": "string"
+        },
+        "justification": {
+          "type": "string"
+        },
+        "solutionIdea": {
+          "type": "string"
+        },
+        "imageUrl": {
+          "type": "string"
+        },
+        "budget": {
+          "type": "number"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "open",
+            "in-progress",
+            "completed",
+            "cancelled"
+          ]
+        },
+        "priority": {
+          "type": "string",
+          "enum": [
+            "preventive",
+            "complementary",
+            "necessary",
+            "urgent"
+          ]
+        },
+        "requesterId": {
+          "type": "string"
+        },
+        "assignedTo": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "requesterName",
+        "churchArea",
+        "requestDetails",
+        "justification",
+        "status",
+        "priority",
+        "requesterId"
+      ]
+    },
+    "InventoryItem": {
+      "title": "Inventory Item",
+      "description": "Items in the maintenance stock",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "quantity": {
+          "type": "integer"
+        },
+        "unit": {
+          "type": "string"
+        },
+        "minQuantity": {
+          "type": "integer"
+        },
+        "category": {
+          "type": "string"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "name",
+        "quantity",
+        "unit"
+      ]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profiles"
+    },
+    "/serviceOrders/{orderId}": {
+      "schema": "ServiceOrder",
+      "description": "Maintenance service orders"
+    },
+    "/inventory/{itemId}": {
+      "schema": "InventoryItem",
+      "description": "Inventory items"
+    }
+  }
+}

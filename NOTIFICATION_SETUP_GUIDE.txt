@@ -1,0 +1,195 @@
+/**
+ * GUIA DE IMPLEMENTAÇÃO DE NOTIFICAÇÕES
+ * 
+ * Siga os passos abaixo para integrar notificações no seu app
+ */
+
+// ============================================================
+// 1. VARIÁVEIS DE AMBIENTE
+// ============================================================
+// Adicione ao seu .env:
+// VITE_FCM_VAPID_KEY=sua-chave-vapid-aqui
+//
+// Para obter a chave VAPID:
+// 1. Vá para Firebase Console -> Settings -> Cloud Messaging
+// 2. Clique em "Generate Key Pair"
+// 3. Copie a chave pública
+
+// ============================================================
+// 2. INICIALIZAR NO APP.TSX
+// ============================================================
+// Importe no seu App.tsx:
+import { initNotifications } from './services/notifications';
+import { NotificationCenter } from './components/NotificationCenter';
+
+function App() {
+  useEffect(() => {
+    // Inicializar notificações quando o usuário está autenticado
+    if (auth.currentUser) {
+      initNotifications().catch(console.error);
+    }
+  }, []);
+
+  return (
+    <div>
+      {/* Adicione o componente em algum lugar do header/navbar */}
+      <NotificationCenter />
+      {/* resto do app */}
+    </div>
+  );
+}
+
+// ============================================================
+// 3. ENVIAR NOTIFICAÇÕES DO BACKEND (Cloud Function)
+// ============================================================
+// Crie uma Cloud Function para enviar notificações:
+
+const functions = require('firebase-functions');
+const admin = require('firebase-admin');
+
+admin.initializeApp();
+
+exports.sendNotification = functions.https.onCall(async (data, context) => {
+  // Verificar autenticação
+  if (!context.auth) {
+    throw new functions.https.HttpsError('unauthenticated', 'Usuário não autenticado');
+  }
+
+  const { userId, title, body, tag } = data;
+
+  // Buscar todos os FCM tokens do usuário
+  const tokensSnapshot = await admin
+    .firestore()
+    .collection(`users/${userId}/fcmTokens`)
+    .get();
+
+  const tokens = tokensSnapshot.docs.map(doc => doc.data().token);
+
+  if (tokens.length === 0) {
+    // Se não há tokens, apenas salvar no Firestore
+    await admin.firestore()
+      .collection(`users/${userId}/notifications`)
+      .add({
+        userId,
+        title,
+        body,
+        tag,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        read: false,
+      });
+    return { success: true, method: 'firestore' };
+  }
+
+  // Enviar via FCM
+  const message = {
+    notification: {
+      title,
+      body,
+      icon: '/favicon.png',
+    },
+    data: {
+      tag: tag || 'default',
+    },
+  };
+
+  const response = await admin.messaging().sendMulticast({
+    tokens,
+    notification: message.notification,
+    data: message.data,
+    webpush: {
+      notification: {
+        title,
+        body,
+        icon: '/favicon.png',
+        badge: '/favicon.png',
+      },
+    },
+  });
+
+  // Salvar notificação no Firestore também (para histórico)
+  await admin.firestore()
+    .collection(`users/${userId}/notifications`)
+    .add({
+      userId,
+      title,
+      body,
+      tag,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      read: false,
+    });
+
+  return {
+    success: true,
+    successCount: response.successCount,
+    failureCount: response.failureCount,
+    method: 'fcm',
+  };
+});
+
+// ============================================================
+// 4. USAR NO SEU APP
+// ============================================================
+// Chamar a função do seu frontend quando necessário:
+
+import { getFunctions, httpsCallable } from 'firebase/functions';
+
+const functions = getFunctions();
+const sendNotification = httpsCallable(functions, 'sendNotification');
+
+// Exemplos de uso:
+await sendNotification({
+  userId: 'user-id',
+  title: 'Nova mensagem',
+  body: 'Você recebeu uma mensagem de João',
+  tag: 'messages',
+});
+
+// ============================================================
+// 5. CONFIGURAR FIRESTORE RULES
+// ============================================================
+// Adicione as regras do arquivo FIRESTORE_RULES_NOTIFICATIONS.txt
+// ao seu firestore.rules
+
+// ============================================================
+// 6. TESTAR
+// ============================================================
+// 1. Instale a PWA no seu dispositivo
+// 2. Feche o navegador/app
+// 3. Envie uma notificação via Cloud Function
+// 4. Você deve receber a notificação push
+// 5. Reabra a PWA e veja as notificações no centro
+
+// ============================================================
+// CASOS DE USO
+// ============================================================
+
+// Caso 1: App aberto (foreground)
+// - FCM dispara onMessage
+// - Service Worker mostra notificação
+// - Notificação salva no Firestore
+
+// Caso 2: App fechado (background)
+// - FCM dispara push event no Service Worker
+// - Service Worker mostra notificação
+// - Notificação salva no Firestore (via Cloud Function)
+
+// Caso 3: App nunca foi instalado/desinstalado
+// - Cloud Function salva notificação no Firestore
+// - Quando usuario volta e instala, sincroniza histórico
+
+// ============================================================
+// MELHORIAS OPCIONAIS
+// ============================================================
+
+// 1. Sincronização automática:
+// - Verificar notificações perdidas ao abrir
+// - Implementar Background Sync API
+
+// 2. Categorias de notificações:
+// - Usuário pode se desinscrever de tipos específicos
+
+// 3. Sons customizados:
+// - Adicionar notification.sound em webpush
+
+// 4. Ações na notificação:
+// - Botões de ação direta na notificação

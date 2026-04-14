@@ -1,0 +1,5 @@
+{
+  "name": "Manutenção IDN",
+  "description": "Sistema de controle de manutenção e almoxarifado para a Igreja das Nações.",
+  "requestFramePermissions": ["camera"]
+}
