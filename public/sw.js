@@ -1,13 +1,18 @@
 importScripts('https://www.gstatic.com/firebasejs/10.7.0/firebase-app.compat.js');
 importScripts('https://www.gstatic.com/firebasejs/10.7.0/firebase-messaging-compat.js');
 
-// Inicializar Firebase (será preenchido dinamicamente)
-self.addEventListener('message', (event) => {
-  if (event.data && event.data.type === 'INIT_FIREBASE') {
-    const config = event.data.config;
-    firebase.initializeApp(config);
-  }
+// Inicializar Firebase diretamente para funcionar em background
+firebase.initializeApp({
+  apiKey: "AIzaSyAP_OA98Ikzt7om8X95qy6vcQsHDcaaslo",
+  authDomain: "manutencao-idn.firebaseapp.com",
+  projectId: "manutencao-idn",
+  storageBucket: "manutencao-idn.firebasestorage.app",
+  messagingSenderId: "767418190496",
+  appId: "1:767418190496:web:9f0608f26a6bdb1ae997c5",
+  measurementId: "G-892TNDQJX8"
 });
+
+const messaging = firebase.messaging();
 
 self.addEventListener('install', (event) => {
   self.skipWaiting();

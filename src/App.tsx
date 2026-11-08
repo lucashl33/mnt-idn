@@ -16,14 +16,16 @@ import {
   setDoc,
   addDoc,
   deleteDoc,
+  deleteField,
   orderBy,
   limit,
   getDocFromServer,
   startAfter,
-  QueryDocumentSnapshot
+  QueryDocumentSnapshot,
+  QueryConstraint
 } from 'firebase/firestore';
-import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { auth, db, storage } from './firebase';
+import { auth, db } from './firebase';
+import { compressImage } from './utils/imageUtils';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { NotificationCenter } from './components/NotificationCenter';
 import { initNotifications } from './services/notifications';
@@ -34,6 +36,7 @@ import {
   LogOut,
   Plus,
   ChevronRight,
+  ChevronLeft,
   AlertTriangle,
   Clock,
   CheckCircle2,
@@ -73,7 +76,8 @@ const priorityTranslations: Record<string, string> = {
   'preventive': 'Preventiva/Programada',
   'complementary': 'Complementar',
   'necessary': 'Necessária',
-  'urgent': 'Urgente'
+  'urgent': 'Urgente',
+  'medium': 'Preventiva/Programada'
 };
 
 const roleTranslations: Record<string, string> = {
@@ -206,10 +210,56 @@ export default function App() {
     characteristic: '',
     quantity: 0
   });
-  const [selectedToolImage, setSelectedToolImage] = useState<File | null>(null);
-  const [editingToolImage, setEditingToolImage] = useState<File | null>(null);
+  const [selectedToolImages, setSelectedToolImages] = useState<File[]>([]);
+  const [existingToolImages, setExistingToolImages] = useState<string[]>([]);
+  const [newToolImages, setNewToolImages] = useState<File[]>([]);
   const [toolError, setToolError] = useState('');
   const [isSubmittingTool, setIsSubmittingTool] = useState(false);
+
+  // Photo Viewer / Lightbox modal state
+  const [photoViewerState, setPhotoViewerState] = useState<{
+    isOpen: boolean;
+    images: string[];
+    currentIndex: number;
+    title: string;
+  }>({
+    isOpen: false,
+    images: [],
+    currentIndex: 0,
+    title: ''
+  });
+
+  const openPhotoViewer = (images: string[], title: string, startIndex = 0) => {
+    if (!images || images.length === 0) return;
+    setPhotoViewerState({
+      isOpen: true,
+      images,
+      currentIndex: startIndex,
+      title
+    });
+  };
+
+  // Keyboard navigation for photo lightbox
+  useEffect(() => {
+    if (!photoViewerState.isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setPhotoViewerState(prev => ({ ...prev, isOpen: false }));
+      } else if (e.key === 'ArrowLeft' && photoViewerState.images.length > 1) {
+        setPhotoViewerState(prev => ({
+          ...prev,
+          currentIndex: (prev.currentIndex - 1 + prev.images.length) % prev.images.length
+        }));
+      } else if (e.key === 'ArrowRight' && photoViewerState.images.length > 1) {
+        setPhotoViewerState(prev => ({
+          ...prev,
+          currentIndex: (prev.currentIndex + 1) % prev.images.length
+        }));
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [photoViewerState.isOpen, photoViewerState.images.length]);
 
   // Maintenance History Modal
   const [isMaintenanceHistoryModalOpen, setIsMaintenanceHistoryModalOpen] = useState(false);
@@ -279,7 +329,7 @@ export default function App() {
   useEffect(() => {
     if (!user) return;
 
-    const constraints = [orderBy('createdAt', 'desc'), limit(5)];
+    const constraints: QueryConstraint[] = [orderBy('createdAt', 'desc'), limit(5)];
 
     // For non-admins, also filter strictly to their own orders for privacy
     if (!isAdmin) {
@@ -496,7 +546,7 @@ export default function App() {
     justification: '',
     solutionIdea: '',
     budget: 0,
-    priority: 'medium' as OSPriority
+    priority: 'preventive' as OSPriority
   });
   const [selectedImage, setSelectedImage] = useState<File | null>(null);
   const [isUploading, setIsUploading] = useState(false);
@@ -509,7 +559,7 @@ export default function App() {
       justification: '',
       solutionIdea: '',
       budget: 0,
-      priority: 'complementary' as OSPriority
+      priority: 'preventive' as OSPriority
     });
     setSelectedImage(null);
   };
@@ -523,10 +573,13 @@ export default function App() {
     try {
       let imageUrl = '';
       if (selectedImage) {
-        const storageRef = ref(storage, `serviceOrders/${Date.now()}_${selectedImage.name}`);
-        const uploadResult = await uploadBytes(storageRef, selectedImage);
-        imageUrl = await getDownloadURL(uploadResult.ref);
+        imageUrl = await compressImage(selectedImage);
       }
+
+      const validPriorities: OSPriority[] = ['preventive', 'complementary', 'necessary', 'urgent'];
+      const priority: OSPriority = validPriorities.includes(newOS.priority)
+        ? newOS.priority
+        : 'preventive';
 
       const osData: any = {
         requesterName: profile.displayName || user.email || 'Usuário',
@@ -535,7 +588,7 @@ export default function App() {
         justification: newOS.justification,
         solutionIdea: newOS.solutionIdea,
         status: 'open',
-        priority: newOS.priority,
+        priority,
         requesterId: user.uid,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
@@ -604,9 +657,7 @@ export default function App() {
 
       let imageUrl = '';
       if (selectedInventoryImage) {
-        const storageRef = ref(storage, `inventory/${Date.now()}_${selectedInventoryImage.name}`);
-        const uploadResult = await uploadBytes(storageRef, selectedInventoryImage);
-        imageUrl = await getDownloadURL(uploadResult.ref);
+        imageUrl = await compressImage(selectedInventoryImage);
       }
 
       const materialData: any = {
@@ -689,11 +740,9 @@ export default function App() {
 
       let imageUrl = editingMaterial.imageUrl || '';
 
-      // Upload new image if selected
+      // Comprimir e converter nova imagem se selecionada
       if (editingInventoryImage) {
-        const storageRef = ref(storage, `inventory/${Date.now()}_${editingInventoryImage.name}`);
-        const uploadResult = await uploadBytes(storageRef, editingInventoryImage);
-        imageUrl = await getDownloadURL(uploadResult.ref);
+        imageUrl = await compressImage(editingInventoryImage);
       }
 
       const updateData: any = {
@@ -724,18 +773,23 @@ export default function App() {
     try {
       const finalUpdates = { ...updates };
 
+      // Build the Firestore data object separately to handle deleteField()
+      const firestoreData: Record<string, any> = {
+        ...updates,
+        updatedAt: new Date().toISOString()
+      };
+
       // Auto-set completionDate if status is changed to completed
       if (updates.status === 'completed') {
         finalUpdates.completionDate = new Date().toISOString();
+        firestoreData.completionDate = new Date().toISOString();
       } else if (updates.status) {
         // Clear completionDate if status is changed BACK from completed
         finalUpdates.completionDate = undefined;
+        firestoreData.completionDate = deleteField();
       }
 
-      await setDoc(doc(db, 'serviceOrders', osId), {
-        ...finalUpdates,
-        updatedAt: new Date().toISOString()
-      }, { merge: true });
+      await setDoc(doc(db, 'serviceOrders', osId), firestoreData, { merge: true });
 
       if (selectedOS && selectedOS.id === osId) {
         setSelectedOS({ ...selectedOS, ...finalUpdates });
@@ -748,13 +802,17 @@ export default function App() {
   const handleCancelOS = async () => {
     if (!selectedOS || !cancellationReason.trim()) return;
 
-    await updateOS(selectedOS.id, {
-      status: 'cancelled',
-      cancellationReason: cancellationReason.trim()
-    });
+    try {
+      await updateOS(selectedOS.id, {
+        status: 'cancelled',
+        cancellationReason: cancellationReason.trim()
+      });
 
-    setIsCancelling(false);
-    setCancellationReason('');
+      setIsCancelling(false);
+      setCancellationReason('');
+    } catch (error) {
+      console.error('Erro ao cancelar OS:', error);
+    }
   };
 
 
@@ -1010,12 +1068,9 @@ export default function App() {
         return;
       }
 
-      let imageUrl = '';
-      if (selectedToolImage) {
-        const storageRef = ref(storage, `tools/${Date.now()}_${selectedToolImage.name}`);
-        const uploadResult = await uploadBytes(storageRef, selectedToolImage);
-        imageUrl = await getDownloadURL(uploadResult.ref);
-      }
+      const compressedImages = await Promise.all(
+        selectedToolImages.map(img => compressImage(img))
+      );
 
       const toolData: any = {
         toolType: newTool.toolType.trim(),
@@ -1026,12 +1081,15 @@ export default function App() {
         updatedAt: new Date().toISOString()
       };
 
-      if (imageUrl) toolData.imageUrl = imageUrl;
+      if (compressedImages.length > 0) {
+        toolData.imageUrls = compressedImages;
+        toolData.imageUrl = compressedImages[0];
+      }
 
       await addDoc(collection(db, 'tools'), toolData);
 
       setNewTool({ toolType: '', characteristic: '', quantity: 0 });
-      setSelectedToolImage(null);
+      setSelectedToolImages([]);
       setIsToolsModalOpen(false);
     } catch (error: any) {
       console.error('Error creating tool:', error);
@@ -1066,28 +1124,26 @@ export default function App() {
         return;
       }
 
-      let imageUrl = editingTool.imageUrl || '';
-
-      if (editingToolImage) {
-        const storageRef = ref(storage, `tools/${Date.now()}_${editingToolImage.name}`);
-        const uploadResult = await uploadBytes(storageRef, editingToolImage);
-        imageUrl = await getDownloadURL(uploadResult.ref);
-      }
+      const compressedNew = await Promise.all(
+        newToolImages.map(img => compressImage(img))
+      );
+      const allImages = [...existingToolImages, ...compressedNew];
 
       const updateData: any = {
         toolType: editToolFormData.toolType.trim(),
         characteristic: editToolFormData.characteristic.trim(),
         quantity: editToolFormData.quantity,
+        imageUrls: allImages,
+        imageUrl: allImages.length > 0 ? allImages[0] : '',
         updatedAt: new Date().toISOString()
       };
-
-      if (imageUrl) updateData.imageUrl = imageUrl;
 
       await setDoc(doc(db, 'tools', editingTool.id), updateData, { merge: true });
 
       setEditingTool(null);
       setEditToolFormData({ toolType: '', characteristic: '', quantity: 0 });
-      setEditingToolImage(null);
+      setExistingToolImages([]);
+      setNewToolImages([]);
       setIsEditToolsModalOpen(false);
     } catch (error: any) {
       console.error('Error updating tool:', error);
@@ -1119,7 +1175,11 @@ export default function App() {
       characteristic: tool.characteristic,
       quantity: tool.quantity
     });
-    setEditingToolImage(null);
+    const images = tool.imageUrls && tool.imageUrls.length > 0
+      ? [...tool.imageUrls]
+      : (tool.imageUrl ? [tool.imageUrl] : []);
+    setExistingToolImages(images);
+    setNewToolImages([]);
     setToolError('');
     setIsEditToolsModalOpen(true);
   };
@@ -2257,17 +2317,36 @@ export default function App() {
                           return (
                             <tr key={tool.id} className="border-b border-black/5 hover:bg-gray-50/50 transition-colors">
                               <td className="px-6 py-4">
-                                {tool.imageUrl ? (
-                                  <img
-                                    src={tool.imageUrl}
-                                    alt={tool.toolType}
-                                    className="w-12 h-12 rounded-lg object-cover border border-black/10"
-                                  />
-                                ) : (
-                                  <div className="w-12 h-12 rounded-lg bg-gray-100 flex items-center justify-center border border-black/5">
-                                    <ImageIcon size={20} className="text-gray-300" />
-                                  </div>
-                                )}
+                                {(() => {
+                                  const images = tool.imageUrls && tool.imageUrls.length > 0
+                                    ? tool.imageUrls
+                                    : (tool.imageUrl ? [tool.imageUrl] : []);
+                                  if (images.length > 0) {
+                                    return (
+                                      <div
+                                        onClick={() => openPhotoViewer(images, tool.toolType, 0)}
+                                        className="relative w-12 h-12 rounded-lg bg-gray-50 border border-black/10 cursor-pointer group overflow-hidden flex items-center justify-center hover:ring-2 hover:ring-blue-500/50 transition-all"
+                                        title="Clique para ampliar"
+                                      >
+                                        <img
+                                          src={images[0]}
+                                          alt={tool.toolType}
+                                          className="w-full h-full object-contain p-0.5"
+                                        />
+                                        {images.length > 1 && (
+                                          <span className="absolute bottom-0 right-0 bg-black/75 text-[10px] font-bold text-white px-1 rounded-tl-md leading-tight">
+                                            +{images.length - 1}
+                                          </span>
+                                        )}
+                                      </div>
+                                    );
+                                  }
+                                  return (
+                                    <div className="w-12 h-12 rounded-lg bg-gray-100 flex items-center justify-center border border-black/5">
+                                      <ImageIcon size={20} className="text-gray-300" />
+                                    </div>
+                                  );
+                                })()}
                               </td>
                               <td className="px-6 py-4">
                                 <p className="font-medium text-gray-900">{tool.toolType}</p>
@@ -3089,47 +3168,72 @@ export default function App() {
 
               <div>
                 <label className="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Foto da Ocorrência (Opcional)</label>
-                <div className="flex items-center gap-4">
-                  <label className="flex-1 flex flex-col items-center justify-center border-2 border-dashed border-black/10 rounded-2xl p-6 hover:border-black/30 transition-all cursor-pointer bg-gray-50/50 group">
-                    <input
-                      type="file"
-                      accept="image/*"
-                      capture="environment"
-                      className="hidden"
-                      onChange={(e) => {
-                        const file = e.target.files?.[0];
-                        if (file) setSelectedImage(file);
-                      }}
+                {selectedImage ? (
+                  <div className="relative w-full aspect-video rounded-2xl overflow-hidden bg-slate-50 border border-black/10">
+                    <img
+                      src={URL.createObjectURL(selectedImage)}
+                      alt="Preview"
+                      className="w-full h-full object-contain p-1"
                     />
-                    {selectedImage ? (
-                      <div className="relative w-full aspect-video rounded-xl overflow-hidden">
-                        <img
-                          src={URL.createObjectURL(selectedImage)}
-                          alt="Preview"
-                          className="w-full h-full object-cover"
-                        />
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            setSelectedImage(null);
-                          }}
-                          className="absolute top-2 right-2 p-1 bg-black/50 text-white rounded-full hover:bg-black/70 transition-colors"
-                        >
-                          <X size={16} />
-                        </button>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedImage(null)}
+                      className="absolute top-2 right-2 p-1.5 bg-black/50 text-white rounded-full hover:bg-black/70 transition-colors shadow-sm"
+                      title="Remover foto"
+                    >
+                      <X size={18} />
+                    </button>
+                    <div className="absolute bottom-2 left-2 right-2 flex items-center justify-between bg-black/60 backdrop-blur-sm text-white px-3 py-1.5 rounded-xl text-xs">
+                      <span className="truncate max-w-[180px] sm:max-w-xs">{selectedImage.name}</span>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedImage(null)}
+                        className="underline hover:text-gray-200 ml-2 font-medium"
+                      >
+                        Trocar foto
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 gap-3">
+                    <label className="flex flex-col items-center justify-center p-5 border-2 border-dashed border-black/10 rounded-2xl hover:border-black/30 hover:bg-black/[0.02] active:scale-[0.98] transition-all cursor-pointer bg-gray-50/50 group text-center">
+                      <input
+                        type="file"
+                        accept="image/*"
+                        capture="environment"
+                        className="hidden"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (file) setSelectedImage(file);
+                          e.target.value = '';
+                        }}
+                      />
+                      <div className="p-3 bg-white rounded-full shadow-sm text-gray-500 group-hover:text-black group-hover:scale-105 transition-all mb-2">
+                        <Camera size={24} />
                       </div>
-                    ) : (
-                      <div className="flex flex-col items-center gap-2 text-gray-400 group-hover:text-gray-600">
-                        <div className="p-3 bg-white rounded-full shadow-sm">
-                          <Camera size={24} />
-                        </div>
-                        <span className="text-sm font-medium">Clique para tirar foto ou selecionar arquivo</span>
+                      <span className="text-sm font-semibold text-gray-800">Tirar Foto</span>
+                      <span className="text-[11px] text-gray-400 mt-0.5">Abrir a câmera</span>
+                    </label>
+
+                    <label className="flex flex-col items-center justify-center p-5 border-2 border-dashed border-black/10 rounded-2xl hover:border-black/30 hover:bg-black/[0.02] active:scale-[0.98] transition-all cursor-pointer bg-gray-50/50 group text-center">
+                      <input
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (file) setSelectedImage(file);
+                          e.target.value = '';
+                        }}
+                      />
+                      <div className="p-3 bg-white rounded-full shadow-sm text-gray-500 group-hover:text-black group-hover:scale-105 transition-all mb-2">
+                        <ImageIcon size={24} />
                       </div>
-                    )}
-                  </label>
-                </div>
+                      <span className="text-sm font-semibold text-gray-800">Galeria</span>
+                      <span className="text-[11px] text-gray-400 mt-0.5">Escolher arquivo</span>
+                    </label>
+                  </div>
+                )}
               </div>
 
               <div className="pt-4 flex gap-4">
@@ -3244,11 +3348,11 @@ export default function App() {
                       }}
                     />
                     {selectedInventoryImage ? (
-                      <div className="relative w-full aspect-video rounded-xl overflow-hidden">
+                      <div className="relative w-full aspect-video rounded-xl overflow-hidden bg-slate-50 border border-black/10">
                         <img
                           src={URL.createObjectURL(selectedInventoryImage)}
                           alt="Preview"
-                          className="w-full h-full object-cover"
+                          className="w-full h-full object-contain p-1"
                         />
                         <button
                           type="button"
@@ -3379,11 +3483,11 @@ export default function App() {
                 <label className="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Foto do Material</label>
                 <div className="space-y-4">
                   {editingMaterial.imageUrl && !editingInventoryImage && (
-                    <div className="relative">
+                    <div className="relative bg-slate-50 rounded-xl overflow-hidden border border-black/10">
                       <img
                         src={editingMaterial.imageUrl}
                         alt={editingMaterial.materialType}
-                        className="w-full h-40 rounded-xl object-cover border border-black/10"
+                        className="w-full h-44 object-contain p-1"
                       />
                       <button
                         type="button"
@@ -3405,11 +3509,11 @@ export default function App() {
                       }}
                     />
                     {editingInventoryImage && editingInventoryImage.name !== 'delete' ? (
-                      <div className="relative w-full aspect-video rounded-xl overflow-hidden">
+                      <div className="relative w-full aspect-video rounded-xl overflow-hidden bg-slate-50 border border-black/10">
                         <img
                           src={URL.createObjectURL(editingInventoryImage)}
                           alt="Preview"
-                          className="w-full h-full object-cover"
+                          className="w-full h-full object-contain p-1"
                         />
                         <button
                           type="button"
@@ -3537,45 +3641,71 @@ export default function App() {
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Foto da Ferramenta (Opcional)</label>
-                <label className="flex-1 flex flex-col items-center justify-center border-2 border-dashed border-black/10 rounded-2xl p-6 hover:border-black/30 transition-all cursor-pointer bg-gray-50/50 group">
-                  <input
-                    type="file"
-                    accept="image/*"
-                    className="hidden"
-                    onChange={(e) => {
-                      const file = e.target.files?.[0];
-                      if (file) setSelectedToolImage(file);
-                    }}
-                  />
-                  {selectedToolImage ? (
-                    <div className="relative w-full aspect-video rounded-xl overflow-hidden">
-                      <img
-                        src={URL.createObjectURL(selectedToolImage)}
-                        alt="Preview"
-                        className="w-full h-full object-cover"
-                      />
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          setSelectedToolImage(null);
-                        }}
-                        className="absolute top-2 right-2 p-1 bg-black/50 text-white rounded-full hover:bg-black/70 transition-colors"
-                      >
-                        <X size={16} />
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="flex flex-col items-center gap-2 text-gray-400 group-hover:text-gray-600">
-                      <div className="p-3 bg-white rounded-full shadow-sm">
-                        <Camera size={24} />
-                      </div>
-                      <span className="text-sm font-medium">Clique para selecionar uma imagem</span>
-                    </div>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="block text-xs font-bold text-gray-400 uppercase tracking-wider">
+                    Fotos da Ferramenta ({selectedToolImages.length}/5) - Opcional
+                  </label>
+                  {selectedToolImages.length > 0 && (
+                    <span className="text-xs text-gray-400">Toque na foto para ampliar</span>
                   )}
-                </label>
+                </div>
+
+                {/* Previews Grid */}
+                {selectedToolImages.length > 0 && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+                    {selectedToolImages.map((file, idx) => {
+                      const url = URL.createObjectURL(file);
+                      return (
+                        <div key={idx} className="relative group rounded-xl border border-black/10 bg-slate-50 overflow-hidden h-44 flex items-center justify-center p-1.5">
+                          <img
+                            src={url}
+                            alt={`Foto ${idx + 1}`}
+                            onClick={() => openPhotoViewer(selectedToolImages.map(f => URL.createObjectURL(f)), newTool.toolType || 'Prévia', idx)}
+                            className="w-full h-full object-contain cursor-pointer transition-transform group-hover:scale-105"
+                          />
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              setSelectedToolImages(prev => prev.filter((_, i) => i !== idx));
+                            }}
+                            className="absolute top-2 right-2 p-1.5 bg-black/60 hover:bg-red-600 text-white rounded-full transition-colors shadow-sm"
+                            title="Remover foto"
+                          >
+                            <X size={14} />
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* Upload Dropzone (only if < 5 photos) */}
+                {selectedToolImages.length < 5 && (
+                  <label className="flex flex-col items-center justify-center border-2 border-dashed border-black/10 rounded-2xl p-5 hover:border-black/30 transition-all cursor-pointer bg-gray-50/50 group">
+                    <input
+                      type="file"
+                      accept="image/*"
+                      multiple
+                      className="hidden"
+                      onChange={(e) => {
+                        const files = Array.from(e.target.files || []);
+                        if (files.length > 0) {
+                          setSelectedToolImages(prev => [...prev, ...files].slice(0, 5));
+                        }
+                      }}
+                    />
+                    <div className="flex flex-col items-center gap-1.5 text-gray-400 group-hover:text-gray-600">
+                      <div className="p-2.5 bg-white rounded-full shadow-sm">
+                        <Camera size={22} />
+                      </div>
+                      <span className="text-sm font-medium">
+                        {selectedToolImages.length === 0 ? 'Clique para selecionar fotos (até 5)' : 'Adicionar mais fotos'}
+                      </span>
+                    </div>
+                  </label>
+                )}
               </div>
 
               <div className="pt-4 flex gap-4">
@@ -3624,7 +3754,8 @@ export default function App() {
                   setIsEditToolsModalOpen(false);
                   setEditingTool(null);
                   setEditToolFormData({ toolType: '', characteristic: '', quantity: 0 });
-                  setEditingToolImage(null);
+                  setExistingToolImages([]);
+                  setNewToolImages([]);
                   setToolError('');
                 }}
                 className="p-2 hover:bg-gray-200 rounded-full transition-colors"
@@ -3677,56 +3808,113 @@ export default function App() {
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Foto da Ferramenta</label>
-                <div className="space-y-4">
-                  {editingTool.imageUrl && !editingToolImage && (
-                    <div className="relative">
-                      <img
-                        src={editingTool.imageUrl}
-                        alt={editingTool.toolType}
-                        className="w-full h-40 rounded-xl object-cover border border-black/10"
-                      />
-                    </div>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="block text-xs font-bold text-gray-400 uppercase tracking-wider">
+                    Fotos da Ferramenta ({existingToolImages.length + newToolImages.length}/5)
+                  </label>
+                  {(existingToolImages.length + newToolImages.length) > 0 && (
+                    <span className="text-xs text-gray-400">Toque na foto para ampliar</span>
                   )}
-                  <label className="flex flex-col items-center justify-center border-2 border-dashed border-black/10 rounded-2xl p-6 hover:border-black/30 transition-all cursor-pointer bg-gray-50/50 group">
-                    <input
-                      type="file"
-                      accept="image/*"
-                      className="hidden"
-                      onChange={(e) => {
-                        const file = e.target.files?.[0];
-                        if (file) setEditingToolImage(file);
-                      }}
-                    />
-                    {editingToolImage ? (
-                      <div className="relative w-full aspect-video rounded-xl overflow-hidden">
+                </div>
+
+                {/* Grid of Existing and New Photos */}
+                {(existingToolImages.length > 0 || newToolImages.length > 0) && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+                    {/* Existing Photos */}
+                    {existingToolImages.map((imgUrl, idx) => (
+                      <div key={`existing-${idx}`} className="relative group rounded-xl border border-black/10 bg-slate-50 overflow-hidden h-44 flex items-center justify-center p-1.5">
                         <img
-                          src={URL.createObjectURL(editingToolImage)}
-                          alt="Preview"
-                          className="w-full h-full object-cover"
+                          src={imgUrl}
+                          alt={`Foto salva ${idx + 1}`}
+                          onClick={() => {
+                            const allUrls = [
+                              ...existingToolImages,
+                              ...newToolImages.map(f => URL.createObjectURL(f))
+                            ];
+                            openPhotoViewer(allUrls, editToolFormData.toolType || editingTool.toolType, idx);
+                          }}
+                          className="w-full h-full object-contain cursor-pointer transition-transform group-hover:scale-105"
                         />
                         <button
                           type="button"
                           onClick={(e) => {
                             e.preventDefault();
                             e.stopPropagation();
-                            setEditingToolImage(null);
+                            setExistingToolImages(prev => prev.filter((_, i) => i !== idx));
                           }}
-                          className="absolute top-2 right-2 p-1 bg-black/50 text-white rounded-full hover:bg-black/70 transition-colors"
+                          className="absolute top-2 right-2 p-1.5 bg-black/60 hover:bg-red-600 text-white rounded-full transition-colors shadow-sm"
+                          title="Remover foto"
                         >
-                          <X size={16} />
+                          <X size={14} />
                         </button>
                       </div>
-                    ) : (
-                      <div className="flex flex-col items-center gap-2 text-gray-400 group-hover:text-gray-600">
-                        <div className="p-3 bg-white rounded-full shadow-sm">
-                          <Camera size={24} />
+                    ))}
+
+                    {/* Newly Selected Photos */}
+                    {newToolImages.map((file, idx) => {
+                      const url = URL.createObjectURL(file);
+                      return (
+                        <div key={`new-${idx}`} className="relative group rounded-xl border-2 border-blue-200 bg-blue-50/30 overflow-hidden h-44 flex items-center justify-center p-1.5">
+                          <img
+                            src={url}
+                            alt={`Nova foto ${idx + 1}`}
+                            onClick={() => {
+                              const allUrls = [
+                                ...existingToolImages,
+                                ...newToolImages.map(f => URL.createObjectURL(f))
+                              ];
+                              openPhotoViewer(allUrls, editToolFormData.toolType || editingTool.toolType, existingToolImages.length + idx);
+                            }}
+                            className="w-full h-full object-contain cursor-pointer transition-transform group-hover:scale-105"
+                          />
+                          <span className="absolute bottom-2 left-2 text-[10px] font-bold bg-blue-600 text-white px-1.5 py-0.5 rounded-md">
+                            Nova
+                          </span>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              setNewToolImages(prev => prev.filter((_, i) => i !== idx));
+                            }}
+                            className="absolute top-2 right-2 p-1.5 bg-black/60 hover:bg-red-600 text-white rounded-full transition-colors shadow-sm"
+                            title="Remover foto"
+                          >
+                            <X size={14} />
+                          </button>
                         </div>
-                        <span className="text-sm font-medium">Clique para selecionar uma imagem</span>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* Upload Dropzone (if < 5 photos) */}
+                {(existingToolImages.length + newToolImages.length) < 5 && (
+                  <label className="flex flex-col items-center justify-center border-2 border-dashed border-black/10 rounded-2xl p-5 hover:border-black/30 transition-all cursor-pointer bg-gray-50/50 group">
+                    <input
+                      type="file"
+                      accept="image/*"
+                      multiple
+                      className="hidden"
+                      onChange={(e) => {
+                        const files = Array.from(e.target.files || []);
+                        if (files.length > 0) {
+                          const currentTotal = existingToolImages.length + newToolImages.length;
+                          const availableSlots = 5 - currentTotal;
+                          setNewToolImages(prev => [...prev, ...files.slice(0, availableSlots)]);
+                        }
+                      }}
+                    />
+                    <div className="flex flex-col items-center gap-1.5 text-gray-400 group-hover:text-gray-600">
+                      <div className="p-2.5 bg-white rounded-full shadow-sm">
+                        <Camera size={22} />
                       </div>
-                    )}
+                      <span className="text-sm font-medium">
+                        {(existingToolImages.length + newToolImages.length) === 0 ? 'Clique para selecionar fotos (até 5)' : 'Adicionar mais fotos'}
+                      </span>
+                    </div>
                   </label>
-                </div>
+                )}
               </div>
 
               <div className="pt-4 flex gap-4">
@@ -3737,7 +3925,8 @@ export default function App() {
                     setIsEditToolsModalOpen(false);
                     setEditingTool(null);
                     setEditToolFormData({ toolType: '', characteristic: '', quantity: 0 });
-                    setEditingToolImage(null);
+                    setExistingToolImages([]);
+                    setNewToolImages([]);
                     setToolError('');
                   }}
                   className="flex-1 px-6 py-4 rounded-2xl font-bold text-gray-500 hover:bg-gray-100 transition-all disabled:opacity-50"
@@ -4085,6 +4274,99 @@ export default function App() {
               )}
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Lightbox / Visualizador de Fotos em Tela Cheia */}
+      {photoViewerState.isOpen && photoViewerState.images.length > 0 && (
+        <div 
+          className="fixed inset-0 bg-black/90 backdrop-blur-md z-[100] flex flex-col items-center justify-between p-4 md:p-6 animate-in fade-in duration-200"
+          onClick={() => setPhotoViewerState(prev => ({ ...prev, isOpen: false }))}
+        >
+          {/* Top Bar */}
+          <div 
+            className="w-full max-w-5xl flex items-center justify-between text-white py-2 px-2 md:px-4 z-10"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div>
+              <h3 className="font-bold text-base md:text-lg">{photoViewerState.title || 'Foto da Ferramenta'}</h3>
+              <p className="text-xs text-white/60">
+                Foto {photoViewerState.currentIndex + 1} de {photoViewerState.images.length}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setPhotoViewerState(prev => ({ ...prev, isOpen: false }))}
+              className="p-2.5 bg-white/10 hover:bg-white/20 rounded-full text-white transition-colors"
+              title="Fechar (Esc)"
+            >
+              <X size={22} />
+            </button>
+          </div>
+
+          {/* Main Photo Area */}
+          <div 
+            className="relative flex-1 w-full max-w-5xl flex items-center justify-center overflow-hidden my-2"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {photoViewerState.images.length > 1 && (
+              <button
+                type="button"
+                onClick={() => setPhotoViewerState(prev => ({
+                  ...prev,
+                  currentIndex: (prev.currentIndex - 1 + prev.images.length) % prev.images.length
+                }))}
+                className="absolute left-2 md:left-4 z-10 p-3 bg-black/60 hover:bg-black/80 text-white rounded-full transition-all backdrop-blur-sm shadow-lg hover:scale-110"
+                title="Foto anterior (Seta esquerda)"
+              >
+                <ChevronLeft size={24} />
+              </button>
+            )}
+
+            <img
+              src={photoViewerState.images[photoViewerState.currentIndex]}
+              alt={photoViewerState.title}
+              className="max-h-[75vh] max-w-full object-contain rounded-2xl shadow-2xl transition-all select-none"
+            />
+
+            {photoViewerState.images.length > 1 && (
+              <button
+                type="button"
+                onClick={() => setPhotoViewerState(prev => ({
+                  ...prev,
+                  currentIndex: (prev.currentIndex + 1) % prev.images.length
+                }))}
+                className="absolute right-2 md:right-4 z-10 p-3 bg-black/60 hover:bg-black/80 text-white rounded-full transition-all backdrop-blur-sm shadow-lg hover:scale-110"
+                title="Próxima foto (Seta direita)"
+              >
+                <ChevronRight size={24} />
+              </button>
+            )}
+          </div>
+
+          {/* Thumbnails strip (if > 1 photo) */}
+          {photoViewerState.images.length > 1 && (
+            <div 
+              className="flex items-center gap-2 max-w-full overflow-x-auto py-2 px-4 z-10"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {photoViewerState.images.map((img, idx) => (
+                <button
+                  key={idx}
+                  type="button"
+                  onClick={() => setPhotoViewerState(prev => ({ ...prev, currentIndex: idx }))}
+                  className={cn(
+                    "w-14 h-14 rounded-xl overflow-hidden border-2 transition-all flex-shrink-0 bg-white/5 p-0.5",
+                    idx === photoViewerState.currentIndex 
+                      ? "border-white scale-105 shadow-lg bg-white/10" 
+                      : "border-white/20 opacity-50 hover:opacity-80"
+                  )}
+                >
+                  <img src={img} alt="" className="w-full h-full object-contain" />
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </ErrorBoundary>

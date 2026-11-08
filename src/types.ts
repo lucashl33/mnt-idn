@@ -64,7 +64,8 @@ export interface Tool {
   toolType: string;      // Tipo da Ferramenta
   characteristic: string; // Característica
   quantity: number;       // Quantidade
-  imageUrl?: string;      // URL da imagem
+  imageUrl?: string;      // URL da imagem principal (compatibilidade retroativa)
+  imageUrls?: string[];   // Lista de URLs/base64 de imagens da ferramenta
   maintenanceHistory: MaintenanceRecord[]; // Histórico de manutenção
   loans?: ToolLoan[];     // Histórico de empréstimos
   createdAt: string;

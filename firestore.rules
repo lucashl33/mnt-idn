@@ -103,11 +103,11 @@ service cloud.firestore {
              data.requestDetails is string && data.requestDetails.size() > 0 && data.requestDetails.size() < 2000 &&
              data.justification is string && data.justification.size() > 0 && data.justification.size() < 2000 &&
              data.status in ['open', 'in-progress', 'completed', 'cancelled'] &&
-             data.priority in ['preventive', 'complementary', 'necessary', 'urgent'] &&
+             data.priority in ['preventive', 'complementary', 'necessary', 'urgent', 'medium'] &&
              data.createdAt is string &&
              data.updatedAt is string &&
              (!('solutionIdea' in data) || (data.solutionIdea is string && data.solutionIdea.size() < 2000)) &&
-             (!('imageUrl' in data) || (data.imageUrl is string && data.imageUrl.size() < 2000)) &&
+             (!('imageUrl' in data) || (data.imageUrl is string && data.imageUrl.size() < 1000000)) &&
              (!('budget' in data) || data.budget is number) &&
              (!('assignedToIds' in data) || (data.assignedToIds is list && data.assignedToIds.size() < 20)) &&
              (!('cancellationReason' in data) || (data.cancellationReason is string && data.cancellationReason.size() < 1000));
@@ -120,7 +120,7 @@ service cloud.firestore {
               data.quantity is number && data.quantity > 0 &&
               data.createdAt is string &&
               data.updatedAt is string &&
-              (!('imageUrl' in data) || (data.imageUrl is string && data.imageUrl.size() < 2000));
+              (!('imageUrl' in data) || (data.imageUrl is string && data.imageUrl.size() < 1000000));
      }
 
       function isValidTool(data) {
@@ -130,7 +130,8 @@ service cloud.firestore {
                data.quantity is number && data.quantity > 0 &&
                data.createdAt is string &&
                data.updatedAt is string &&
-               (!('imageUrl' in data) || (data.imageUrl is string && data.imageUrl.size() < 2000)) &&
+               (!('imageUrl' in data) || (data.imageUrl is string && data.imageUrl.size() < 1000000)) &&
+               (!('imageUrls' in data) || (data.imageUrls is list && data.imageUrls.size() <= 10)) &&
                (!('maintenanceHistory' in data) || (data.maintenanceHistory is list)) &&
                (!('loans' in data) || (data.loans is list));
       }

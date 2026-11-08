@@ -210,7 +210,7 @@ export const notifyOnServiceOrderCreated = functions.firestore
           try {
             await messaging.sendMulticast({
               tokens,
-              notification: { title, body, icon: '/favicon.png' },
+              notification: { title, body },
               data: { orderId: snap.id, tag: 'new_order' },
             });
           } catch (err) {
@@ -273,7 +273,7 @@ export const notifyOnServiceOrderUpdated = functions.firestore
       if (tokens.length > 0) {
         await messaging.sendMulticast({
           tokens,
-          notification: { title, body, icon: '/favicon.png' },
+          notification: { title, body },
           data: { orderId: change.after.id, tag: 'order_updated' },
         });
       }
@@ -300,7 +300,7 @@ export const notifyOnServiceOrderUpdated = functions.firestore
         if (tokens.length > 0) {
           await messaging.sendMulticast({
             tokens,
-            notification: { title, body, icon: '/favicon.png' },
+            notification: { title, body },
             data: { orderId: change.after.id, tag: 'order_updated' },
           });
         }
